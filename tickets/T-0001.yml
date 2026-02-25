@@ -1,0 +1,48 @@
+id: T-0001
+title: "Add ticket schema validator"
+type: feature
+priority: P2
+status: READY
+
+owner:
+  role: LEADER
+  agent: "leader"
+
+assignees:
+  - "worker1"
+
+description: >
+  Validate ticket yml files against schema and show readable errors.
+  Should integrate with CI pipeline.
+
+file_ownership:
+  - "src/validate.ts"
+  - "tests/validate.test.ts"
+
+acceptance_criteria:
+  - "Running cli validate reports errors with file/line hints"
+  - "CI fails if invalid ticket exists"
+  - "Valid tickets pass without errors"
+
+artifacts:
+  proposed_changes: []
+  pr_links: []
+  commits: []
+
+quality_gates:
+  lint: true
+  tests: true
+  typecheck: true
+  coverage_min: 70
+
+log:
+  - at: "2026-02-25T10:00:00+09:00"
+    by: "leader"
+    action: "CREATED"
+    note: "MVP core ticket validation needed"
+  - at: "2026-02-25T10:05:00+09:00"
+    by: "leader"
+    action: "STATUS_CHANGE"
+    from: "BACKLOG"
+    to: "READY"
+    note: "AC refined, ready for worker"

@@ -1,0 +1,42 @@
+id: T-0002
+title: "Implement board CLI command"
+type: feature
+priority: P1
+status: BACKLOG
+
+owner:
+  role: LEADER
+  agent: "leader"
+
+assignees: []
+
+description: >
+  Create a CLI command that reads tickets/*.yml and outputs
+  a kanban board view grouped by status.
+
+file_ownership:
+  - "src/board.ts"
+  - "src/cli.ts"
+  - "tests/board.test.ts"
+
+acceptance_criteria:
+  - "board command outputs tickets grouped by status"
+  - "Shows ticket count per status"
+  - "Shows ticket id, title, assignees, priority"
+
+artifacts:
+  proposed_changes: []
+  pr_links: []
+  commits: []
+
+quality_gates:
+  lint: true
+  tests: true
+  typecheck: true
+  coverage_min: 70
+
+log:
+  - at: "2026-02-25T10:10:00+09:00"
+    by: "leader"
+    action: "CREATED"
+    note: "Board visualization for tracking"

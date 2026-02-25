@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "claude-kanban": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./node_modules/claude-kanban-mcp/build/index.js"]
+    }
+  }
+}
