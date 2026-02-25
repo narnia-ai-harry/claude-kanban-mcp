@@ -4,73 +4,34 @@ Ticket-based kanban workflow for Claude Code agents — as an MCP server.
 
 ## Features
 
-- **8 Tools**: `ticket_create`, `ticket_get`, `ticket_list`, `ticket_update`, `ticket_transition`, `ticket_validate`, `board_view`, `board_generate`
-- **3 Resources**: Leader / Worker / Quality agent prompts
-- **2 Prompt Templates**: `assign-ticket`, `review-request`
+- **9 Tools**: `ticket_create`, `ticket_get`, `ticket_list`, `ticket_update`, `ticket_transition`, `ticket_validate`, `board_view`, `board_generate`, `ticket_next_id`
+- **1 Prompt**: `kickoff` — 팀 워크플로우 지침 + 보드 상태를 한번에 제공
 - **YAML Tickets**: `tickets/*.yml` — version-controllable, human-readable
 - **Status Validation**: enforces valid state transitions with auto-logged history
 - **BOARD.md**: auto-generated kanban board markdown
 
-## Quick Start (이 레포에서 개발)
+## 설치 및 MCP 등록 (3단계)
+
+### Step 1: 클론 & 빌드
 
 ```bash
+git clone https://github.com/narnia-ai-harry/claude-kanban-mcp.git
+cd claude-kanban-mcp
 npm install
 npm run build
-
-# 로컬 테스트 (stdio)
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node build/index.js
-```
-
-## 다른 레포에 이식하기 (3단계)
-
-### Step 1: 설치
-
-```bash
-# 방법 A: npm 패키지로 설치 (npm에 publish한 경우)
-npm install claude-kanban-mcp
-
-# 방법 B: git repo에서 직접 설치
-npm install git+https://github.com/YOUR_ORG/claude-kanban-mcp.git
-
-# 방법 C: 로컬 경로로 설치 (모노레포 등)
-npm install ../path/to/claude-kanban-mcp
 ```
 
 ### Step 2: MCP 등록
 
-**방법 A: `.mcp.json` 파일 생성** (프로젝트 루트에)
-
-```json
-{
-  "mcpServers": {
-    "claude-kanban": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["./node_modules/claude-kanban-mcp/build/index.js"]
-    }
-  }
-}
-```
-
-**방법 B: Claude Code CLI로 등록**
-
 ```bash
-# 프로젝트 스코프 (현재 프로젝트에서만)
-claude mcp add --transport stdio claude-kanban -- node ./node_modules/claude-kanban-mcp/build/index.js
-
-# 유저 스코프 (모든 프로젝트에서)
+# 유저 스코프 (모든 프로젝트에서 사용)
 claude mcp add --transport stdio --scope user claude-kanban -- node /absolute/path/to/claude-kanban-mcp/build/index.js
+
+# 또는 프로젝트 스코프 (현재 프로젝트에서만)
+claude mcp add --transport stdio claude-kanban -- node /absolute/path/to/claude-kanban-mcp/build/index.js
 ```
 
-### Step 3: 초기 파일 구조 세팅
-
-```bash
-mkdir -p tickets prompts
-# 프롬프트 파일 복사 (선택)
-cp node_modules/claude-kanban-mcp/prompts/*.md prompts/
-```
-
-### 확인
+### Step 3: 확인
 
 ```bash
 claude
@@ -79,7 +40,19 @@ claude
 # claude-kanban: connected 가 보이면 성공
 ```
 
-## MCP Tools 상세
+## 사용법
+
+Claude Code 세션에서:
+
+```
+# kickoff 프롬프트로 팀 워크플로우 시작
+/mcp__claude-kanban__kickoff
+
+# 또는 개별 도구 호출
+board_view 실행해줘
+```
+
+## MCP Tools
 
 | Tool | 설명 | 주요 파라미터 |
 |---|---|---|
@@ -91,6 +64,7 @@ claude
 | `ticket_validate` | 전체 검증 | (없음) |
 | `board_view` | 칸반 보드 텍스트 | (없음) |
 | `board_generate` | BOARD.md 생성 | (없음) |
+| `ticket_next_id` | 다음 티켓 ID | (없음) |
 
 ## 상태 전환 규칙
 
@@ -102,14 +76,6 @@ BACKLOG → READY → IN_PROGRESS → REVIEW → DONE
 어디서든 → BLOCKED (해소 플랜 필수)
 BLOCKED → BACKLOG | READY | IN_PROGRESS | REVIEW
 ```
-
-## Agent 프롬프트
-
-`prompts/` 디렉토리에 Agent별 프롬프트를 넣으면 MCP Resource로 자동 노출됩니다:
-
-- `prompts/leader.md` → Team Leader 역할/규칙
-- `prompts/worker.md` → Worker 구현 가이드
-- `prompts/quality.md` → Quality 리뷰 체크리스트
 
 ## 개발
 
