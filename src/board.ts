@@ -46,7 +46,8 @@ export function boardView(): string {
     } else {
       for (const t of items) {
         const assignee = t.assignees.length > 0 ? t.assignees.join(", ") : "unassigned";
-        lines.push(`  ${t.id} [${t.priority}] ${t.title}`);
+        const branch = t.git?.ticket_branch ? ` (${t.git.ticket_branch})` : "";
+        lines.push(`  ${t.id} [${t.priority}] ${t.title}${branch}`);
         lines.push(`         → ${assignee}`);
       }
     }
@@ -94,11 +95,12 @@ export function generateBoardMd(): string {
       continue;
     }
 
-    lines.push("| ID | Priority | Title | Assignees |");
-    lines.push("|---|---|---|---|");
+    lines.push("| ID | Priority | Title | Assignees | Branch |");
+    lines.push("|---|---|---|---|---|");
     for (const t of items) {
       const assignee = t.assignees.length > 0 ? t.assignees.join(", ") : "_unassigned_";
-      lines.push(`| ${t.id} | ${t.priority} | ${t.title} | ${assignee} |`);
+      const branch = t.git?.ticket_branch ?? "";
+      lines.push(`| ${t.id} | ${t.priority} | ${t.title} | ${assignee} | ${branch} |`);
     }
     lines.push("");
   }
