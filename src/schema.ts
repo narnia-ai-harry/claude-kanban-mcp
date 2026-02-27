@@ -101,5 +101,5 @@ export const VALID_TRANSITIONS: Record<string, string[]> = {
   IN_PROGRESS: ["REVIEW", "BLOCKED"],
   REVIEW: ["DONE", "IN_PROGRESS", "BLOCKED"],
   BLOCKED: ["BACKLOG", "READY", "IN_PROGRESS", "REVIEW"],
-  DONE: [], // terminal state
+  DONE: ["IN_PROGRESS"],
 };
