@@ -55,7 +55,6 @@ description: >
   배경, 범위, 비범위를 구분하여 작성.
   Worker가 이것만 읽고 착수할 수 있어야 한다.
 
-# ⚠️ 핵심: Worker가 수정할 파일을 명시적으로 나열
 file_ownership:
   - "src/auth/jwt.ts"
   - "src/auth/middleware.ts"
@@ -66,16 +65,15 @@ acceptance_criteria:
   - "2~5개"
 
 quality_gates:
-  lint: true
-  tests: true
-  typecheck: true
-  coverage_min: 70
+  verify_commands:
+    - "npm run lint"
+    - "npm run test"
+    - "npm run typecheck"
+  smoke_test: "npm run build"
 
-log:
-  - at: "ISO8601"
-    by: "leader"
-    action: "CREATED"
-    note: "티켓 생성 사유"
+git:
+  command_branch: "feat/add-auth"
+  base_branch: "main"
 ```
 
 ### 1.3 파일 소유권 분리 (가장 중요)
@@ -103,14 +101,12 @@ AC:
 - {{file1}} — {{이 파일에서 할 일}}
 - {{file2}} — {{이 파일에서 할 일}}
 
-⚠️ 수정 금지 파일: {{다른 Worker 소유 파일 목록}}
+수정 금지 파일: {{다른 Worker 소유 파일 목록}}
 
-검증:
-- npm run lint
-- npm run test
-- npm run typecheck
+검증 명령: {{verify_commands 목록}}
 
-완료 시: status를 REVIEW로 변경하고 나에게 알려줘.
+완료 시: git_commit_ticket으로 커밋하고, status를 REVIEW로 변경해줘. merge는 하지 마.
+```
 ```
 
 ---
@@ -129,12 +125,12 @@ AC:
 - [ ] {{AC1}}
 - [ ] {{AC2}}
 
-게이트: lint ✓ / tests ✓ / typecheck ✓ / coverage >= {{N}}%
+verify_commands: {{명령 목록}}
+코딩 규칙 4가지 체크리스트 확인 요망.
 
-리스크 포인트:
-- {{리스크1}}
-
-기대 결과: APPROVE → DONE / REQUEST_CHANGES → IN_PROGRESS
+기대 결과:
+- APPROVE → git_merge_ticket으로 명령 브랜치에 squash merge + DONE
+- REQUEST_CHANGES → MUST_FIX 명시 → Fix Agent 실행
 ```
 
 ---
@@ -154,11 +150,49 @@ AC:
 
 ---
 
-## 5. 완료 조건
+## 5. 브랜치 관리
 
-모든 티켓이 DONE이 되면:
-1. BOARD.md를 갱신한다
-2. 아래를 보고한다:
-   - 완료 티켓 목록 + 각 티켓의 변경 파일
-   - 전체 검증 결과 (lint/test/typecheck)
-   - 남은 이슈 / 후속 작업 제안
+### 명령 수신 시
+1. `git_init_command`로 명령 브랜치 생성 (`feat/{slug}`)
+2. 티켓 분할 시 각 티켓에 `git.command_branch` 기록
+3. `quality_gates`에 프로젝트에 맞는 `verify_commands` 지정
+
+### Worker 실행 (2단계 sub-agent)
+
+**1단계 — Plan Agent (병렬):**
+티켓별 Task(subagent) 생성
+→ PLAN 반환 → `ticket_update`로 plan 필드에 기록
+
+**2단계 — Execute Agent (병렬, worktree):**
+티켓별 Task(subagent, worktree) 생성
+PLAN + AC + file_ownership + verify_commands 전달
+→ 구현 + Inner Loop 자가 검증 + commit + REVIEW 전환
+
+### Quality 실행 (1개 sub-agent)
+
+모든 Worker가 REVIEW로 올린 후:
+Task(quality subagent) 1개 생성:
+- 명령 브랜치 기준으로 전체 PR 리뷰
+- 티켓별 AC + PLAN + 코딩 규칙 4가지 체크리스트
+- 티켓 간 교차 문제 확인
+- APPROVE → `git_merge_ticket`으로 squash merge
+- REQUEST_CHANGES → MUST_FIX 명시
+
+### 피드백 루프
+
+Quality가 REQUEST_CHANGES 시:
+1. 해당 티켓의 Fix Agent 생성 (MUST_FIX만 전달)
+2. Fix Agent 수정 완료 후 Quality 재실행
+3. 최대 2회. 초과 시 직접 판단 (추가 티켓 / 재설계)
+
+---
+
+## 6. 명령 브랜치 최종 검토
+
+Quality가 모든 PR을 merge한 후:
+1. 명령 브랜치에서 전체 verify_commands 실행
+2. 처음 계획(원래 명령)대로 구현되었는지 확인
+3. 미흡하면 → 추가 티켓 생성 또는 리뷰 피드백
+4. 완료 확인 → `git_merge_command`로 main merge
+5. `board_generate` → BOARD.md 갱신
+6. 완료 보고: 변경 파일, 검증 결과, 남은 이슈
