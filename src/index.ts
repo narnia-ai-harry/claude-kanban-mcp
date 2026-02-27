@@ -15,66 +15,100 @@ import {
   transitionTicket,
   validateAllTickets,
   nextTicketId,
+  saveTicket,
 } from "./ticket.js";
 import { boardView, generateBoardMd, writeBoardMd } from "./board.js";
+import {
+  validateCommandBranch,
+  ticketBranchName,
+  branchExists,
+  createBranch,
+  createWorktree,
+  commitAll,
+  squashMerge,
+  mergeNoFf,
+  getCurrentBranch,
+  getChangedFiles,
+  getDiffStat,
+} from "./git.js";
 
 // ═══════════════════════════════════════════════════
-// Embedded Workflow Instructions
+// Helpers
+// ═══════════════════════════════════════════════════
+
+function ok(text: string) {
+  return { content: [{ type: "text" as const, text }] };
+}
+
+function fail(e: unknown) {
+  return {
+    content: [{ type: "text" as const, text: `Error: ${e instanceof Error ? e.message : String(e)}` }],
+    isError: true as const,
+  };
+}
+
+// ═══════════════════════════════════════════════════
+// Embedded Workflow Instructions (v2)
 // ═══════════════════════════════════════════════════
 
 const WORKFLOW_INSTRUCTIONS = `
-# Agent Team Kanban Workflow
+# Agent Team Kanban Workflow v2
 
-## 팀 구성
+## 역할 분리
 
-| 역할 | 이름 | 설명 |
-|---|---|---|
-| Leader | leader | 티켓 분할, Worker 조율, Quality 리뷰 트리거 |
-| Worker | worker1~worker3 | 코드 구현, 테스트 작성 |
-| Quality | quality | 코드 리뷰, 품질 게이트 검증 |
+Worker:   구현 + 커밋 + PR (merge 안 함)
+Quality:  PR 리뷰 + 명령 브랜치에 통합 merge (사소한 수정 가능)
+Leader:   명령 브랜치 최종 검토 + main merge
 
-## 작업 프로세스
+## Agent 실행 모델
 
-### Step 1: Leader — 티켓 분할
-- 작업을 2~6개 티켓으로 분할 (ticket_create)
-- 파일 소유권을 티켓별로 겹치지 않게 분리
-- 각 티켓에 AC(acceptance_criteria), file_ownership 필수 포함
+모든 Agent는 Task tool sub-agent로 실행.
+각 sub-agent는 필요한 정보만 prompt로 받아 깨끗한 context에서 시작.
 
-### Step 2: Leader — Worker 할당
-- 티켓별로 Worker를 지정 (ticket_update로 assignees 설정)
-- Worker에게 지시: 담당 파일만 수정, 완료 시 REVIEW로 전환
+Worker는 2단계로 실행:
+1. Plan Agent — 코드베이스 탐색 + PLAN 작성 (→ ticket에 plan 기록)
+2. Execute Agent — PLAN만 받고 구현 (worktree에서, clean context)
 
-### Step 3: Worker — 구현
-- READY 티켓을 IN_PROGRESS로 전환 (ticket_transition)
-- file_ownership에 명시된 파일만 수정 (다른 파일 수정 금지)
-- 구현 완료 후 lint/test/typecheck 실행
-- 통과하면 REVIEW로 전환, Leader에게 보고
+Quality는 1개 Agent가 전체 PR을 리뷰:
+- 명령 브랜치 기준으로 모든 티켓 diff 확인
+- 티켓 간 교차 문제 감지
+- APPROVE한 티켓을 squash merge
+- 통합 중 사소한 수정 직접 가능
 
-### Step 4: Quality — 리뷰
-- 코드를 직접 읽고 lint/test/typecheck 실행
-- AC 충족 여부 검증
-- APPROVE → Leader에게 보고 (Leader가 DONE 전환)
-- REQUEST_CHANGES → IN_PROGRESS로 되돌림, 수정 사항 명시
+## 피드백 루프
 
-### Step 5: Leader — 마무리
-- 모든 티켓 DONE 확인
-- board_generate로 BOARD.md 갱신
-- 완료 보고: 변경 파일, 검증 결과, 남은 이슈
+Inner Loop (Execute Agent 내부):
+1. verify_commands / smoke_test 실행
+2. 자가 검증 (4가지 코딩 규칙)
+3. 최대 2회 수정. 초과 시 BLOCKED.
 
-## 상태 흐름
+Outer Loop (Quality → Fix Agent):
+1. Quality APPROVE → merge
+2. Quality REQUEST_CHANGES → Fix Agent(MUST_FIX만 수정) → 재검증
+3. 최대 2회 왕복. 초과 시 Leader 에스컬레이션.
 
-BACKLOG → READY → IN_PROGRESS → REVIEW → DONE
-                                   ↓
-                              IN_PROGRESS (수정 요청)
-어디서든 → BLOCKED (해소 플랜 필수)
+심각도:
+- MUST_FIX: 반드시 수정. Fix Agent가 처리.
+- NOTE: 참고만. Fix Agent에 전달하지 않음.
 
-## 핵심 규칙
+## Git 워크플로우
 
-1. 파일 소유권 분리: 동일 파일이 2개 이상의 티켓에 나타나면 안 된다
-2. Worker는 담당 파일만 수정: file_ownership 밖의 파일 수정 금지
-3. 모든 상태 변경은 log 기록: ticket_transition이 자동으로 기록
-4. Quality 통과 없이 DONE 금지: 반드시 Quality APPROVE 후 DONE 전환
-5. BLOCKED 시 해소 플랜 필수: 이유와 다음 액션을 note에 기록
+1. Leader: git_init_command → 명령 브랜치 생성
+2. Worker: git_create_ticket_branch → 서브 브랜치 (worktree)
+3. Worker: 구현 → git_commit_ticket → REVIEW 전환 (merge 안 함)
+4. Quality: 전체 PR 리뷰 → git_merge_ticket → 명령 브랜치에 통합
+5. Leader: 명령 브랜치 최종 검토 → git_merge_command → main merge
+
+## 티켓 소유권
+
+- assignees에 지정된 Agent만 IN_PROGRESS 전환 가능
+- IN_PROGRESS/DONE 티켓은 다른 Agent가 가져갈 수 없음
+
+## 커밋 규칙
+
+- 형식: "T-XXXX: {요약}"
+- git_commit_ticket 도구만 사용
+- file_ownership 위반 경고 시 Leader에게 보고
 
 ## 사용 가능한 MCP 도구
 
@@ -88,6 +122,12 @@ BACKLOG → READY → IN_PROGRESS → REVIEW → DONE
 | ticket_validate | 스키마 검증 | Quality |
 | board_view | 칸반 보드 확인 | Leader |
 | board_generate | BOARD.md 생성 | Leader |
+| git_init_command | 명령 브랜치 생성 | Leader |
+| git_create_ticket_branch | 티켓 서브 브랜치 + worktree | Worker |
+| git_commit_ticket | 티켓 커밋 | Worker, Fix Agent |
+| git_check_conflicts | 충돌 사전 확인 | Quality |
+| git_merge_ticket | 티켓→명령 브랜치 squash merge | Quality |
+| git_merge_command | 명령→main merge commit | Leader |
 `.trim();
 
 // ═══════════════════════════════════════════════════
@@ -96,7 +136,7 @@ BACKLOG → READY → IN_PROGRESS → REVIEW → DONE
 
 const server = new McpServer({
   name: "claude-kanban",
-  version: "1.0.0",
+  version: "2.0.0",
 });
 
 // ── Tool: ticket_create ─────────────────────────────
@@ -116,7 +156,17 @@ server.tool(
     acceptance_criteria: z.array(z.string()).optional(),
     owner_agent: z.string().optional().describe("Agent name for owner. Default: leader"),
     owner_role: z.enum(["LEADER", "WORKER", "QUALITY"]).optional(),
-    coverage_min: z.number().optional().describe("Min coverage %. Default: 70"),
+    verify_commands: z.array(z.string()).optional().describe("Commands to run for verification (e.g. ['npm test', 'npm run lint'])"),
+    smoke_test: z.string().optional().describe("Quick smoke test command"),
+    plan: z.object({
+      steps: z.array(z.object({ description: z.string(), verification: z.string() })).optional(),
+      assumptions: z.array(z.string()).optional(),
+    }).optional().describe("Implementation plan"),
+    git: z.object({
+      command_branch: z.string().optional(),
+      ticket_branch: z.string().optional(),
+      base_branch: z.string().optional(),
+    }).optional().describe("Git branch info"),
   },
   async (args) => {
     try {
@@ -136,15 +186,21 @@ server.tool(
           agent: args.owner_agent ?? "leader",
         },
         quality_gates: {
-          lint: true,
-          tests: true,
-          typecheck: true,
-          coverage_min: args.coverage_min ?? 70,
+          verify_commands: args.verify_commands ?? [],
+          smoke_test: args.smoke_test,
         },
+        plan: args.plan ? {
+          steps: args.plan.steps ?? [],
+          assumptions: args.plan.assumptions ?? [],
+        } : undefined,
+        git: args.git ? {
+          ...args.git,
+          base_branch: args.git.base_branch ?? "main",
+        } : undefined,
       });
-      return { content: [{ type: "text", text: `✅ Created ${ticket.id}: ${ticket.title}\n\nStatus: ${ticket.status}\nAssignees: ${ticket.assignees.join(", ") || "none"}\nAC: ${ticket.acceptance_criteria.length} items\nFiles: ${ticket.file_ownership.length} files` }] };
+      return ok(`Created ${ticket.id}: ${ticket.title}\n\nStatus: ${ticket.status}\nAssignees: ${ticket.assignees.join(", ") || "none"}\nAC: ${ticket.acceptance_criteria.length} items\nFiles: ${ticket.file_ownership.length} files`);
     } catch (e) {
-      return { content: [{ type: "text", text: `❌ Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      return fail(e);
     }
   }
 );
@@ -160,9 +216,9 @@ server.tool(
   async ({ id }) => {
     try {
       const t = getTicket(id);
-      return { content: [{ type: "text", text: yaml.dump(t, { lineWidth: 120, noRefs: true }) }] };
+      return ok(yaml.dump(t, { lineWidth: 120, noRefs: true }));
     } catch (e) {
-      return { content: [{ type: "text", text: `❌ ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      return fail(e);
     }
   }
 );
@@ -181,14 +237,14 @@ server.tool(
     try {
       const tickets = listTickets(args);
       if (tickets.length === 0) {
-        return { content: [{ type: "text", text: "No tickets found matching filters." }] };
+        return ok("No tickets found matching filters.");
       }
       const lines = tickets.map(
         (t) => `${t.id} [${t.status}] [${t.priority}] ${t.title} → ${t.assignees.join(", ") || "unassigned"}`
       );
-      return { content: [{ type: "text", text: `Found ${tickets.length} ticket(s):\n\n${lines.join("\n")}` }] };
+      return ok(`Found ${tickets.length} ticket(s):\n\n${lines.join("\n")}`);
     } catch (e) {
-      return { content: [{ type: "text", text: `❌ ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      return fail(e);
     }
   }
 );
@@ -208,14 +264,9 @@ server.tool(
     try {
       const ticket = transitionTicket(id, to, by, note);
       const lastLog = ticket.log[ticket.log.length - 1];
-      return {
-        content: [{
-          type: "text",
-          text: `✅ ${id}: ${lastLog.from} → ${lastLog.to}\nBy: ${by}\nNote: ${lastLog.note ?? ""}\n\nCurrent status: ${ticket.status}`,
-        }],
-      };
+      return ok(`${id}: ${lastLog.from} → ${lastLog.to}\nBy: ${by}\nNote: ${lastLog.note ?? ""}\n\nCurrent status: ${ticket.status}`);
     } catch (e) {
-      return { content: [{ type: "text", text: `❌ ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      return fail(e);
     }
   }
 );
@@ -237,7 +288,17 @@ server.tool(
     priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
     proposed_changes: z.array(z.string()).optional().describe("Add to artifacts.proposed_changes"),
     pr_links: z.array(z.string()).optional().describe("Add to artifacts.pr_links"),
-    coverage_min: z.number().optional(),
+    verify_commands: z.array(z.string()).optional().describe("Quality gate verify commands"),
+    smoke_test: z.string().optional().describe("Quality gate smoke test command"),
+    plan: z.object({
+      steps: z.array(z.object({ description: z.string(), verification: z.string() })).optional(),
+      assumptions: z.array(z.string()).optional(),
+    }).optional().describe("Implementation plan"),
+    git: z.object({
+      command_branch: z.string().optional(),
+      ticket_branch: z.string().optional(),
+      base_branch: z.string().optional(),
+    }).optional().describe("Git branch info"),
   },
   async (args) => {
     try {
@@ -255,19 +316,27 @@ server.tool(
         if (args.pr_links) updates.artifacts.pr_links = args.pr_links;
       }
 
-      if (args.coverage_min !== undefined) {
-        updates.quality_gates = { coverage_min: args.coverage_min };
+      if (args.verify_commands !== undefined || args.smoke_test !== undefined) {
+        updates.quality_gates = {};
+        if (args.verify_commands !== undefined) updates.quality_gates.verify_commands = args.verify_commands;
+        if (args.smoke_test !== undefined) updates.quality_gates.smoke_test = args.smoke_test;
+      }
+
+      if (args.plan !== undefined) {
+        updates.plan = {
+          steps: args.plan.steps ?? [],
+          assumptions: args.plan.assumptions ?? [],
+        };
+      }
+
+      if (args.git !== undefined) {
+        updates.git = args.git;
       }
 
       const ticket = updateTicket(args.id, updates, args.by, args.note);
-      return {
-        content: [{
-          type: "text",
-          text: `✅ ${ticket.id} updated by ${args.by}\nUpdated fields: ${Object.keys(updates).join(", ")}`,
-        }],
-      };
+      return ok(`${ticket.id} updated by ${args.by}\nUpdated fields: ${Object.keys(updates).join(", ")}`);
     } catch (e) {
-      return { content: [{ type: "text", text: `❌ ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      return fail(e);
     }
   }
 );
@@ -282,23 +351,18 @@ server.tool(
     try {
       const results = validateAllTickets();
       if (results.length === 0) {
-        return { content: [{ type: "text", text: "No ticket files found in tickets/ directory." }] };
+        return ok("No ticket files found in tickets/ directory.");
       }
 
       const lines = results.map((r) => {
-        if (r.valid) return `✅ ${r.file}`;
-        return `❌ ${r.file}\n${r.errors.map((e) => `   - ${e}`).join("\n")}`;
+        if (r.valid) return `PASS ${r.file}`;
+        return `FAIL ${r.file}\n${r.errors.map((e) => `   - ${e}`).join("\n")}`;
       });
 
       const valid = results.filter((r) => r.valid).length;
-      return {
-        content: [{
-          type: "text",
-          text: `Validation: ${valid}/${results.length} valid\n\n${lines.join("\n")}`,
-        }],
-      };
+      return ok(`Validation: ${valid}/${results.length} valid\n\n${lines.join("\n")}`);
     } catch (e) {
-      return { content: [{ type: "text", text: `❌ ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      return fail(e);
     }
   }
 );
@@ -311,9 +375,9 @@ server.tool(
   {},
   async () => {
     try {
-      return { content: [{ type: "text", text: boardView() }] };
+      return ok(boardView());
     } catch (e) {
-      return { content: [{ type: "text", text: `❌ ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      return fail(e);
     }
   }
 );
@@ -328,9 +392,9 @@ server.tool(
     try {
       const outPath = writeBoardMd();
       const content = generateBoardMd();
-      return { content: [{ type: "text", text: `✅ BOARD.md written to ${outPath}\n\n${content}` }] };
+      return ok(`BOARD.md written to ${outPath}\n\n${content}`);
     } catch (e) {
-      return { content: [{ type: "text", text: `❌ ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      return fail(e);
     }
   }
 );
@@ -343,9 +407,234 @@ server.tool(
   {},
   async () => {
     try {
-      return { content: [{ type: "text", text: nextTicketId() }] };
+      return ok(nextTicketId());
     } catch (e) {
-      return { content: [{ type: "text", text: `❌ ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      return fail(e);
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════
+// Git Tools (6 new tools)
+// ═══════════════════════════════════════════════════
+
+// ── Tool: git_init_command ──────────────────────────
+
+server.tool(
+  "git_init_command",
+  "Create a command branch (feat/{slug}) from base branch. Used by Leader at workflow start.",
+  {
+    slug: z.string().describe("Command slug (lowercase, hyphens). e.g. 'add-auth'"),
+    base: z.string().optional().describe("Base branch to fork from. Default: current branch"),
+  },
+  async ({ slug, base }) => {
+    try {
+      const branchName = validateCommandBranch(slug);
+      createBranch(branchName, base);
+      return ok(`Command branch created: ${branchName}\nBase: ${base ?? "current branch"}`);
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+// ── Tool: git_create_ticket_branch ──────────────────
+
+server.tool(
+  "git_create_ticket_branch",
+  "Create a ticket sub-branch with worktree from command branch. Used by Worker. Branch: feat/{slug}--T-XXXX",
+  {
+    ticket_id: z.string().describe("Ticket ID (e.g. T-0001)"),
+    command_branch: z.string().describe("Parent command branch (e.g. feat/add-auth)"),
+  },
+  async ({ ticket_id, command_branch }) => {
+    try {
+      if (!branchExists(command_branch)) {
+        throw new Error(`Command branch "${command_branch}" does not exist.`);
+      }
+
+      const branchName = ticketBranchName(command_branch, ticket_id);
+      const worktreePath = path.join(".claude", "worktrees", ticket_id);
+      createWorktree(worktreePath, branchName, command_branch);
+
+      // Auto-update ticket YAML
+      const ticket = getTicket(ticket_id);
+      ticket.git = {
+        command_branch,
+        ticket_branch: branchName,
+        base_branch: ticket.git?.base_branch ?? "main",
+      };
+      ticket.log.push({
+        at: new Date().toISOString(),
+        by: "system",
+        action: "BRANCH_CREATED",
+        note: `Branch: ${branchName}, Worktree: ${worktreePath}`,
+      });
+      saveTicket(ticket);
+
+      return ok(`Ticket branch created: ${branchName}\nWorktree: ${worktreePath}\nTicket ${ticket_id} git info updated.`);
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+// ── Tool: git_commit_ticket ─────────────────────────
+
+server.tool(
+  "git_commit_ticket",
+  "Commit all changes with ticket prefix. Format: 'T-XXXX: {summary}'. Warns on file_ownership violations. Used by Worker/Fix Agent.",
+  {
+    ticket_id: z.string().describe("Ticket ID (e.g. T-0001)"),
+    summary: z.string().describe("Commit summary (without ticket prefix)"),
+    cwd: z.string().optional().describe("Working directory (worktree path). Default: current directory"),
+  },
+  async ({ ticket_id, summary, cwd }) => {
+    try {
+      const message = `${ticket_id}: ${summary}`;
+      const ticket = getTicket(ticket_id);
+
+      // Check file_ownership violations
+      let warning = "";
+      if (ticket.file_ownership.length > 0) {
+        try {
+          const base = ticket.git?.command_branch ?? "HEAD~1";
+          const changed = getChangedFiles(base, "HEAD", cwd);
+          const violations = changed.filter(
+            (f) => !ticket.file_ownership.some((owned) => f.startsWith(owned) || f === owned)
+          );
+          if (violations.length > 0) {
+            warning = `\n\nWARNING: Files outside file_ownership:\n${violations.map((f) => `  - ${f}`).join("\n")}\nReport this to Leader.`;
+          }
+        } catch {
+          // Ignore diff errors (e.g. first commit)
+        }
+      }
+
+      const sha = commitAll(message, cwd);
+
+      // Auto-update ticket artifacts
+      ticket.artifacts.commits.push(sha);
+      ticket.log.push({
+        at: new Date().toISOString(),
+        by: "system",
+        action: "COMMITTED",
+        note: `${sha}: ${message}`,
+      });
+      saveTicket(ticket);
+
+      return ok(`Committed: ${sha} ${message}${warning}`);
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+// ── Tool: git_check_conflicts ───────────────────────
+
+server.tool(
+  "git_check_conflicts",
+  "Check diff between ticket branch and command branch. Used by Quality before merge.",
+  {
+    ticket_branch: z.string().describe("Ticket branch name"),
+    command_branch: z.string().describe("Command branch name"),
+  },
+  async ({ ticket_branch, command_branch }) => {
+    try {
+      const stat = getDiffStat(command_branch, ticket_branch);
+      if (!stat) {
+        return ok("No differences found between branches.");
+      }
+      return ok(`Diff stat (${command_branch}..${ticket_branch}):\n\n${stat}`);
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+// ── Tool: git_merge_ticket ──────────────────────────
+
+server.tool(
+  "git_merge_ticket",
+  "Squash merge ticket branch into command branch. Only for REVIEW+ tickets. Used by Quality.",
+  {
+    ticket_id: z.string().describe("Ticket ID"),
+    command_branch: z.string().describe("Target command branch"),
+  },
+  async ({ ticket_id, command_branch }) => {
+    try {
+      const ticket = getTicket(ticket_id);
+
+      if (!["REVIEW", "DONE"].includes(ticket.status)) {
+        throw new Error(`Ticket ${ticket_id} is ${ticket.status}. Must be REVIEW or DONE to merge.`);
+      }
+
+      const ticketBranch = ticket.git?.ticket_branch;
+      if (!ticketBranch) {
+        throw new Error(`Ticket ${ticket_id} has no git.ticket_branch set.`);
+      }
+
+      // Ensure we are on command branch
+      const current = getCurrentBranch();
+      if (current !== command_branch) {
+        throw new Error(`Not on command branch. Current: ${current}, Expected: ${command_branch}. Checkout first.`);
+      }
+
+      squashMerge(ticketBranch, `${ticket_id}: ${ticket.title} (squash)`);
+
+      ticket.log.push({
+        at: new Date().toISOString(),
+        by: "quality",
+        action: "MERGED",
+        note: `Squash merged ${ticketBranch} into ${command_branch}`,
+      });
+      saveTicket(ticket);
+
+      return ok(`Squash merged ${ticketBranch} → ${command_branch}\nTicket: ${ticket_id}`);
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+// ── Tool: git_merge_command ─────────────────────────
+
+server.tool(
+  "git_merge_command",
+  "Merge command branch into main (--no-ff). All tickets must be DONE. Used by Leader.",
+  {
+    command_branch: z.string().describe("Command branch to merge"),
+    base_branch: z.string().optional().describe("Target branch. Default: main"),
+    message: z.string().optional().describe("Merge commit message"),
+  },
+  async ({ command_branch, base_branch, message }) => {
+    try {
+      const target = base_branch ?? "main";
+
+      // Verify all tickets for this command are DONE
+      const allTickets = listTickets();
+      const commandTickets = allTickets.filter(
+        (t) => t.git?.command_branch === command_branch
+      );
+
+      const notDone = commandTickets.filter((t) => t.status !== "DONE");
+      if (notDone.length > 0) {
+        const list = notDone.map((t) => `  ${t.id} [${t.status}]`).join("\n");
+        throw new Error(`Not all tickets are DONE:\n${list}`);
+      }
+
+      // Ensure we are on target branch
+      const current = getCurrentBranch();
+      if (current !== target) {
+        throw new Error(`Not on ${target}. Current: ${current}. Checkout first.`);
+      }
+
+      const msg = message ?? `Merge ${command_branch} into ${target}`;
+      mergeNoFf(command_branch, msg);
+
+      return ok(`Merged ${command_branch} → ${target} (--no-ff)\nTickets: ${commandTickets.map((t) => t.id).join(", ")}`);
+    } catch (e) {
+      return fail(e);
     }
   }
 );
@@ -354,7 +643,6 @@ server.tool(
 // Prompts (slash commands only)
 // ═══════════════════════════════════════════════════
 
-// /mcp__claude-kanban__kickoff — 유일한 진입점
 server.prompt(
   "kickoff",
   "Start a kanban workflow for a task. Returns full team instructions + current board state.",
@@ -376,14 +664,14 @@ server.prompt(
       "",
       "---",
       "",
-      "## 📌 작업 요청",
+      "## 작업 요청",
       "",
       task,
       "",
       "## 지시",
       "",
       "위 워크플로우 규칙에 따라 이 작업을 티켓으로 분할하고 팀을 운영하세요.",
-      "ticket_create → ticket_transition → board_view 순서로 진행하세요.",
+      "git_init_command → ticket_create → ticket_transition → board_view 순서로 진행하세요.",
     ].join("\n");
 
     return { messages: [{ role: "user", content: { type: "text", text: msg } }] };
@@ -397,7 +685,7 @@ server.prompt(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("claude-kanban MCP server running on stdio");
+  console.error("claude-kanban MCP server v2.0.0 running on stdio");
 }
 
 main().catch((e) => {
