@@ -65,7 +65,7 @@ export function createTicket(data: Partial<Ticket> & Pick<Ticket, "id" | "title"
     file_ownership: [],
     acceptance_criteria: [],
     artifacts: { proposed_changes: [], pr_links: [], commits: [] },
-    quality_gates: { lint: true, tests: true, typecheck: true, coverage_min: 70 },
+    quality_gates: { verify_commands: [] },
     log: [{ at: now, by: data.owner?.agent ?? "leader", action: "CREATED", note: "Ticket created" }],
     ...data,
   });
@@ -90,6 +90,15 @@ export function transitionTicket(
     throw new Error(
       `Invalid transition: ${from} → ${to}. Allowed: ${allowed?.join(", ") ?? "none"}`
     );
+  }
+
+  // Assignee validation: only assigned agents can start work
+  if (from === "READY" && to === "IN_PROGRESS") {
+    if (!ticket.assignees.includes(by)) {
+      throw new Error(
+        `Agent "${by}" is not assigned to ${id}. Assignees: [${ticket.assignees.join(", ")}]`
+      );
+    }
   }
 
   const logEntry: LogEntryType = {
@@ -132,6 +141,12 @@ export function updateTicket(
   }
   if (updates.quality_gates) {
     ticket.quality_gates = { ...ticket.quality_gates, ...updates.quality_gates };
+  }
+  if (updates.plan !== undefined) {
+    ticket.plan = updates.plan;
+  }
+  if (updates.git !== undefined) {
+    ticket.git = ticket.git ? { ...ticket.git, ...updates.git } : updates.git;
   }
 
   const logEntry: LogEntryType = {
