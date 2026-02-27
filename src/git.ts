@@ -49,6 +49,12 @@ export function ticketBranchName(commandBranch: string, ticketId: string): strin
   return `${commandBranch}--${ticketId}`;
 }
 
+// ── Checkout ────────────────────────────────────────
+
+export function checkout(branch: string, cwd?: string): void {
+  git(["checkout", branch], cwd);
+}
+
 // ── Mutate ──────────────────────────────────────────
 
 export function createBranch(name: string, base?: string, cwd?: string): void {
@@ -72,10 +78,24 @@ export function createWorktree(
   git(["worktree", "add", worktreePath, "-b", branchName, baseBranch], cwd);
 }
 
-export function commitAll(message: string, cwd?: string): string {
+const SENSITIVE_PATTERNS = [/\.env/, /\.pem$/, /\.key$/, /credentials/i, /secret/i];
+
+export function commitAll(message: string, cwd?: string): { sha: string; warnings: string[] } {
   git(["add", "-A"], cwd);
+
+  // Check for sensitive files
+  const staged = git(["diff", "--cached", "--name-only"], cwd).split("\n").filter(Boolean);
+  const warnings: string[] = [];
+  for (const file of staged) {
+    if (SENSITIVE_PATTERNS.some((p) => p.test(file))) {
+      git(["reset", "HEAD", "--", file], cwd);
+      warnings.push(`Unstaged sensitive file: ${file}`);
+    }
+  }
+
   git(["commit", "-m", message], cwd);
-  return git(["rev-parse", "--short", "HEAD"], cwd);
+  const sha = git(["rev-parse", "--short", "HEAD"], cwd);
+  return { sha, warnings };
 }
 
 export function squashMerge(source: string, message: string, cwd?: string): void {
