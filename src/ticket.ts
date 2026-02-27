@@ -2,10 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
 import { TicketSchema, VALID_TRANSITIONS, type Ticket, type LogEntryType } from "./schema.js";
+import { projectRoot } from "./root.js";
 
-/** Resolve tickets directory relative to working directory */
+/** Resolve tickets directory relative to project root */
 function ticketsDir(): string {
-  const dir = path.join(process.cwd(), "tickets");
+  const dir = path.join(projectRoot(), "tickets");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -49,7 +50,10 @@ export function listTickets(filter?: { status?: string; assignee?: string; prior
 export function saveTicket(ticket: Ticket): void {
   const validated = TicketSchema.parse(ticket);
   const yml = yaml.dump(validated, { lineWidth: 120, noRefs: true });
-  fs.writeFileSync(ticketPath(validated.id), yml, "utf-8");
+  const target = ticketPath(validated.id);
+  const tmp = target + ".tmp";
+  fs.writeFileSync(tmp, yml, "utf-8");
+  fs.renameSync(tmp, target);
 }
 
 export function createTicket(data: Partial<Ticket> & Pick<Ticket, "id" | "title" | "type" | "priority">): Ticket {
