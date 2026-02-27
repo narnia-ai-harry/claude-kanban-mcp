@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listTickets } from "./ticket.js";
+import { projectRoot } from "./root.js";
 import type { Ticket, TicketStatus } from "./schema.js";
 
 const STATUS_ORDER: TicketStatus[] = [
@@ -116,9 +117,9 @@ export function generateBoardMd(): string {
   return lines.join("\n");
 }
 
-export function writeBoardMd(): string {
+export function writeBoardMd(): { outPath: string; content: string } {
   const content = generateBoardMd();
-  const outPath = path.join(process.cwd(), "BOARD.md");
+  const outPath = path.join(projectRoot(), "BOARD.md");
   fs.writeFileSync(outPath, content, "utf-8");
-  return outPath;
+  return { outPath, content };
 }
