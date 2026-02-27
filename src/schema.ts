@@ -23,12 +23,27 @@ export const LogEntry = z.object({
   note: z.string().optional(),
 });
 
-// === Quality Gates ===
+// === Quality Gates (v2: project-agnostic) ===
 export const QualityGates = z.object({
-  lint: z.boolean().default(true),
-  tests: z.boolean().default(true),
-  typecheck: z.boolean().default(true),
-  coverage_min: z.number().min(0).max(100).default(70),
+  verify_commands: z.array(z.string()).default([]),
+  smoke_test: z.string().optional(),
+});
+
+// === Plan ===
+export const PlanStep = z.object({
+  description: z.string(),
+  verification: z.string(),
+});
+export const Plan = z.object({
+  steps: z.array(PlanStep).default([]),
+  assumptions: z.array(z.string()).default([]),
+});
+
+// === Git Info ===
+export const GitInfo = z.object({
+  command_branch: z.string().optional(),
+  ticket_branch: z.string().optional(),
+  base_branch: z.string().default("main"),
 });
 
 // === Artifacts ===
@@ -66,11 +81,11 @@ export const TicketSchema = z.object({
   }),
 
   quality_gates: QualityGates.default({
-    lint: true,
-    tests: true,
-    typecheck: true,
-    coverage_min: 70,
+    verify_commands: [],
   }),
+
+  plan: Plan.optional(),
+  git: GitInfo.optional(),
 
   log: z.array(LogEntry).default([]),
 });
