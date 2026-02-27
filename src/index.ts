@@ -17,7 +17,7 @@ import {
   nextTicketId,
   saveTicket,
 } from "./ticket.js";
-import { boardView, generateBoardMd, writeBoardMd } from "./board.js";
+import { boardView, writeBoardMd } from "./board.js";
 import {
   validateCommandBranch,
   ticketBranchName,
@@ -25,12 +25,14 @@ import {
   createBranch,
   createWorktree,
   commitAll,
+  checkout,
   squashMerge,
   mergeNoFf,
   getCurrentBranch,
   getChangedFiles,
   getDiffStat,
 } from "./git.js";
+import { projectRoot } from "./root.js";
 
 // ═══════════════════════════════════════════════════
 // Helpers
@@ -127,6 +129,7 @@ Outer Loop (Quality → Fix Agent):
 | git_commit_ticket | 티켓 커밋 | Worker, Fix Agent |
 | git_check_conflicts | 충돌 사전 확인 | Quality |
 | git_merge_ticket | 티켓→명령 브랜치 squash merge | Quality |
+| git_checkout | 브랜치 전환 | 모두 |
 | git_merge_command | 명령→main merge commit | Leader |
 `.trim();
 
@@ -390,8 +393,7 @@ server.tool(
   {},
   async () => {
     try {
-      const outPath = writeBoardMd();
-      const content = generateBoardMd();
+      const { outPath, content } = writeBoardMd();
       return ok(`BOARD.md written to ${outPath}\n\n${content}`);
     } catch (e) {
       return fail(e);
@@ -501,7 +503,7 @@ server.tool(
           const base = ticket.git?.command_branch ?? "HEAD~1";
           const changed = getChangedFiles(base, "HEAD", cwd);
           const violations = changed.filter(
-            (f) => !ticket.file_ownership.some((owned) => f.startsWith(owned) || f === owned)
+            (f) => !ticket.file_ownership.some((owned) => f === owned || f.startsWith(owned + "/"))
           );
           if (violations.length > 0) {
             warning = `\n\nWARNING: Files outside file_ownership:\n${violations.map((f) => `  - ${f}`).join("\n")}\nReport this to Leader.`;
@@ -511,7 +513,10 @@ server.tool(
         }
       }
 
-      const sha = commitAll(message, cwd);
+      const { sha, warnings: commitWarnings } = commitAll(message, cwd);
+      if (commitWarnings.length > 0) {
+        warning += `\n\nSENSITIVE FILES:\n${commitWarnings.join("\n")}`;
+      }
 
       // Auto-update ticket artifacts
       ticket.artifacts.commits.push(sha);
@@ -574,10 +579,10 @@ server.tool(
         throw new Error(`Ticket ${ticket_id} has no git.ticket_branch set.`);
       }
 
-      // Ensure we are on command branch
+      // Ensure we are on command branch — auto checkout if needed
       const current = getCurrentBranch();
       if (current !== command_branch) {
-        throw new Error(`Not on command branch. Current: ${current}, Expected: ${command_branch}. Checkout first.`);
+        checkout(command_branch);
       }
 
       squashMerge(ticketBranch, `${ticket_id}: ${ticket.title} (squash)`);
@@ -623,10 +628,10 @@ server.tool(
         throw new Error(`Not all tickets are DONE:\n${list}`);
       }
 
-      // Ensure we are on target branch
+      // Ensure we are on target branch — auto checkout if needed
       const current = getCurrentBranch();
       if (current !== target) {
-        throw new Error(`Not on ${target}. Current: ${current}. Checkout first.`);
+        checkout(target);
       }
 
       const msg = message ?? `Merge ${command_branch} into ${target}`;
@@ -638,6 +643,43 @@ server.tool(
     }
   }
 );
+
+// ── Tool: git_checkout ───────────────────────────────
+
+server.tool(
+  "git_checkout",
+  "Checkout a branch. Used before merge or to switch context.",
+  {
+    branch: z.string().describe("Branch name to checkout"),
+  },
+  async ({ branch }) => {
+    try {
+      checkout(branch);
+      return ok(`Checked out branch: ${branch}`);
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+// ═══════════════════════════════════════════════════
+// Resources (role prompts)
+// ═══════════════════════════════════════════════════
+
+for (const role of ["leader", "worker", "quality"] as const) {
+  server.registerResource(
+    `prompt-${role}`,
+    `kanban://prompt/${role}`,
+    { description: `${role} agent role prompt`, mimeType: "text/markdown" },
+    async (uri) => {
+      const content = fs.readFileSync(
+        path.join(projectRoot(), "prompts", `${role}.md`),
+        "utf-8"
+      );
+      return { contents: [{ uri: uri.href, text: content, mimeType: "text/markdown" }] };
+    }
+  );
+}
 
 // ═══════════════════════════════════════════════════
 // Prompts (slash commands only)
