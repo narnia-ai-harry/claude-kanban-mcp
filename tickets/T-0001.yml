@@ -30,10 +30,10 @@ artifacts:
   commits: []
 
 quality_gates:
-  lint: true
-  tests: true
-  typecheck: true
-  coverage_min: 70
+  verify_commands:
+    - "npm run lint"
+    - "npm run test"
+    - "npm run typecheck"
 
 log:
   - at: "2026-02-25T10:00:00+09:00"
