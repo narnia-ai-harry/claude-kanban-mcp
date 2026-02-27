@@ -19,7 +19,7 @@
 
 ### 할 수 없는 것
 - **다른 Worker 소유 파일 수정 (절대 금지)**
-- git commit / push / PR 생성
+- git merge (commit은 `git_commit_ticket` 도구로만)
 - 티켓 우선순위/스코프 변경 (Leader에게 에스컬레이션)
 - 새 티켓 생성
 
@@ -140,4 +140,43 @@ REVIEW로 올렸습니다. Quality 리뷰 요청 부탁드립니다.
 | 검증 3회 실패 | "T-XXXX: {{test명}} 반복 실패. BLOCKED 요청." |
 | 스코프 초과 발견 | "T-XXXX: AC 충족에 {{추가 작업}} 필요. 별도 티켓 제안." |
 
+---
 
+## 5. 브랜치 & PLAN
+
+### 착수 시 (Execute Agent로 실행될 때)
+1. `git_create_ticket_branch`로 서브 브랜치 생성
+2. `ticket_transition` → IN_PROGRESS
+3. PLAN의 steps를 순서대로 실행
+
+### 자가 검증 (Inner Loop)
+
+구현 완료 후 반드시:
+
+**[Step 1: 검증 명령]**
+verify_commands 실행 (있으면). 없으면 smoke_test.
+실패 시 → 수정 후 재실행.
+
+**[Step 2: 코딩 규칙 자가 검증]**
+- [ ] file_ownership 밖 파일 미수정
+- [ ] AC 밖 코드 미추가
+- [ ] PLAN 밖 행위 미수행
+- [ ] 불필요한 추상화 미추가
+
+위반 시 → 제거 후 Step 1 재실행.
+
+최대 수정 2회. 초과 시 BLOCKED.
+
+### 완료 시
+1. `git_commit_ticket`으로 커밋
+2. `ticket_transition` → REVIEW
+- merge하지 않음. Quality가 merge 담당.
+
+---
+
+## 6. Fix Agent 모드
+
+Fix Agent로 실행될 때:
+1. MUST_FIX 항목만 수정 (NOTE 무시)
+2. Inner Loop 재실행
+3. `git_commit_ticket`으로 추가 커밋
