@@ -17,7 +17,6 @@ import {
   nextTicketId,
   saveTicket,
 } from "./ticket.js";
-import { boardView, writeBoardMd } from "./board.js";
 import {
   validateCommandBranch,
   ticketBranchName,
@@ -30,9 +29,12 @@ import {
   mergeNoFf,
   getCurrentBranch,
   getChangedFiles,
+  getMergeBase,
   getDiffStat,
 } from "./git.js";
 import { projectRoot } from "./root.js";
+import { summarizeConflictRisk } from "./conflict.js";
+import { assertLeaderCaller, assertQualityCaller } from "./policy.js";
 
 // ═══════════════════════════════════════════════════
 // Helpers
@@ -122,15 +124,13 @@ Outer Loop (Quality → Fix Agent):
 | ticket_update | 필드 수정 | Leader, Worker |
 | ticket_transition | 상태 변경 | 모두 |
 | ticket_validate | 스키마 검증 | Quality |
-| board_view | 칸반 보드 확인 | Leader |
-| board_generate | BOARD.md 생성 | Leader |
 | git_init_command | 명령 브랜치 생성 | Leader |
 | git_create_ticket_branch | 티켓 서브 브랜치 + worktree | Worker |
 | git_commit_ticket | 티켓 커밋 | Worker, Fix Agent |
 | git_check_conflicts | 충돌 사전 확인 | Quality |
-| git_merge_ticket | 티켓→명령 브랜치 squash merge | Quality |
+| git_merge_ticket | 티켓→명령 브랜치 squash merge | Quality (by=quality) |
 | git_checkout | 브랜치 전환 | 모두 |
-| git_merge_command | 명령→main merge commit | Leader |
+| git_merge_command | 명령→main merge commit | Leader (by=leader) |
 `.trim();
 
 // ═══════════════════════════════════════════════════
@@ -256,7 +256,7 @@ server.tool(
 
 server.tool(
   "ticket_transition",
-  "Change ticket status with validation. Auto-records log entry. Valid transitions: BACKLOG→READY, READY→IN_PROGRESS, IN_PROGRESS→REVIEW, REVIEW→DONE|IN_PROGRESS, any→BLOCKED.",
+  "Change ticket status with validation. Auto-records log entry. Valid transitions are enforced by status machine in schema.ts.",
   {
     id: z.string().describe("Ticket ID"),
     to: z.enum(["BACKLOG", "READY", "IN_PROGRESS", "REVIEW", "DONE", "BLOCKED"]).describe("Target status"),
@@ -370,37 +370,6 @@ server.tool(
   }
 );
 
-// ── Tool: board_view ────────────────────────────────
-
-server.tool(
-  "board_view",
-  "Display the kanban board — all tickets grouped by status.",
-  {},
-  async () => {
-    try {
-      return ok(boardView());
-    } catch (e) {
-      return fail(e);
-    }
-  }
-);
-
-// ── Tool: board_generate ────────────────────────────
-
-server.tool(
-  "board_generate",
-  "Generate/update BOARD.md file in the project root.",
-  {},
-  async () => {
-    try {
-      const { outPath, content } = writeBoardMd();
-      return ok(`BOARD.md written to ${outPath}\n\n${content}`);
-    } catch (e) {
-      return fail(e);
-    }
-  }
-);
-
 // ── Tool: ticket_next_id ────────────────────────────
 
 server.tool(
@@ -495,6 +464,7 @@ server.tool(
     try {
       const message = `${ticket_id}: ${summary}`;
       const ticket = getTicket(ticket_id);
+      let ownershipViolations: string[] = [];
 
       // Check file_ownership violations
       let warning = "";
@@ -502,11 +472,11 @@ server.tool(
         try {
           const base = ticket.git?.command_branch ?? "HEAD~1";
           const changed = getChangedFiles(base, "HEAD", cwd);
-          const violations = changed.filter(
+          ownershipViolations = changed.filter(
             (f) => !ticket.file_ownership.some((owned) => f === owned || f.startsWith(owned + "/"))
           );
-          if (violations.length > 0) {
-            warning = `\n\nWARNING: Files outside file_ownership:\n${violations.map((f) => `  - ${f}`).join("\n")}\nReport this to Leader.`;
+          if (ownershipViolations.length > 0) {
+            warning = `\n\nWARNING: Files outside file_ownership:\n${ownershipViolations.map((f) => `  - ${f}`).join("\n")}\nReport this to Leader.`;
           }
         } catch {
           // Ignore diff errors (e.g. first commit)
@@ -526,6 +496,14 @@ server.tool(
         action: "COMMITTED",
         note: `${sha}: ${message}`,
       });
+      if (ownershipViolations.length > 0) {
+        ticket.log.push({
+          at: new Date().toISOString(),
+          by: "system",
+          action: "OWNERSHIP_VIOLATION_WARN",
+          note: `Changed files outside file_ownership: ${ownershipViolations.join(", ")}`,
+        });
+      }
       saveTicket(ticket);
 
       return ok(`Committed: ${sha} ${message}${warning}`);
@@ -539,18 +517,43 @@ server.tool(
 
 server.tool(
   "git_check_conflicts",
-  "Check diff between ticket branch and command branch. Used by Quality before merge.",
+  "Analyze merge risk between ticket and command branches (changed files, overlap, risk level). Used by Quality before merge.",
   {
     ticket_branch: z.string().describe("Ticket branch name"),
     command_branch: z.string().describe("Command branch name"),
   },
   async ({ ticket_branch, command_branch }) => {
     try {
+      const base = getMergeBase(command_branch, ticket_branch);
+      const ticketFiles = getChangedFiles(base, ticket_branch);
+      const commandFiles = getChangedFiles(base, command_branch);
+      const summary = summarizeConflictRisk(ticketFiles, commandFiles);
       const stat = getDiffStat(command_branch, ticket_branch);
-      if (!stat) {
-        return ok("No differences found between branches.");
+
+      const lines = [
+        `Conflict precheck: ${ticket_branch} -> ${command_branch}`,
+        `merge_base: ${base}`,
+        `risk: ${summary.risk.toUpperCase()}`,
+      ];
+
+      if (summary.reasons.length > 0) {
+        lines.push(`reasons: ${summary.reasons.join("; ")}`);
       }
-      return ok(`Diff stat (${command_branch}..${ticket_branch}):\n\n${stat}`);
+
+      lines.push("");
+      lines.push(`ticket_changed_files (${summary.ticketFiles.length}):`);
+      lines.push(...(summary.ticketFiles.length ? summary.ticketFiles.map((f) => `  - ${f}`) : ["  (none)"]));
+      lines.push("");
+      lines.push(`command_changed_files (${summary.commandFiles.length}):`);
+      lines.push(...(summary.commandFiles.length ? summary.commandFiles.map((f) => `  - ${f}`) : ["  (none)"]));
+      lines.push("");
+      lines.push(`overlap_files (${summary.overlapFiles.length}):`);
+      lines.push(...(summary.overlapFiles.length ? summary.overlapFiles.map((f) => `  - ${f}`) : ["  (none)"]));
+      lines.push("");
+      lines.push(`diff_stat (${command_branch}..${ticket_branch}):`);
+      lines.push(stat || "  (none)");
+
+      return ok(lines.join("\n"));
     } catch (e) {
       return fail(e);
     }
@@ -565,9 +568,11 @@ server.tool(
   {
     ticket_id: z.string().describe("Ticket ID"),
     command_branch: z.string().describe("Target command branch"),
+    by: z.string().describe("Caller identity. Must be quality."),
   },
-  async ({ ticket_id, command_branch }) => {
+  async ({ ticket_id, command_branch, by }) => {
     try {
+      assertQualityCaller("git_merge_ticket", by);
       const ticket = getTicket(ticket_id);
 
       if (!["REVIEW", "DONE"].includes(ticket.status)) {
@@ -589,7 +594,7 @@ server.tool(
 
       ticket.log.push({
         at: new Date().toISOString(),
-        by: "quality",
+        by,
         action: "MERGED",
         note: `Squash merged ${ticketBranch} into ${command_branch}`,
       });
@@ -611,9 +616,11 @@ server.tool(
     command_branch: z.string().describe("Command branch to merge"),
     base_branch: z.string().optional().describe("Target branch. Default: main"),
     message: z.string().optional().describe("Merge commit message"),
+    by: z.string().describe("Caller identity. Must be leader."),
   },
-  async ({ command_branch, base_branch, message }) => {
+  async ({ command_branch, base_branch, message, by }) => {
     try {
+      assertLeaderCaller("git_merge_command", by);
       const target = base_branch ?? "main";
 
       // Verify all tickets for this command are DONE
@@ -687,20 +694,13 @@ for (const role of ["leader", "worker", "quality"] as const) {
 
 server.prompt(
   "kickoff",
-  "Start a kanban workflow for a task. Returns full team instructions + current board state.",
+  "Start a kanban workflow for a task. Returns team instructions and next ticket ID.",
   { task: z.string().describe("What you want to accomplish") },
   async ({ task }) => {
-    const board = boardView();
     const nid = nextTicketId();
 
     const msg = [
       WORKFLOW_INSTRUCTIONS,
-      "",
-      "---",
-      "",
-      "## 현재 보드 상태",
-      "",
-      board,
       "",
       `## 다음 티켓 ID: ${nid}`,
       "",
@@ -713,7 +713,8 @@ server.prompt(
       "## 지시",
       "",
       "위 워크플로우 규칙에 따라 이 작업을 티켓으로 분할하고 팀을 운영하세요.",
-      "git_init_command → ticket_create → ticket_transition → board_view 순서로 진행하세요.",
+      "git_init_command → ticket_create → ticket_transition 순서로 진행하세요.",
+      "보드 관찰은 별도 Viewer에서 수행하세요: npm run board -- --root /abs/path/to/project",
     ].join("\n");
 
     return { messages: [{ role: "user", content: { type: "text", text: msg } }] };

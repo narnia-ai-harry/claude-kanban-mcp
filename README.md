@@ -1,18 +1,31 @@
 # Claude Kanban MCP Server
 
-Ticket-based kanban workflow for Claude Code agents — as an MCP server.
+Ticket-based kanban workflow for Claude Code agents, with a separate local Board Viewer.
+
+## Breaking Changes (v2 -> current)
+
+- MCP tools `board_view`, `board_generate` are removed.
+- Board is now provided by a separate read-only web Viewer.
+- `git_merge_ticket`, `git_merge_command` now require `by` parameter.
 
 ## Features
 
-- **9 Tools**: `ticket_create`, `ticket_get`, `ticket_list`, `ticket_update`, `ticket_transition`, `ticket_validate`, `board_view`, `board_generate`, `ticket_next_id`
-- **1 Prompt**: `kickoff` — 팀 워크플로우 지침 + 보드 상태를 한번에 제공
-- **YAML Tickets**: `tickets/*.yml` — version-controllable, human-readable
-- **Status Validation**: enforces valid state transitions with auto-logged history
-- **BOARD.md**: auto-generated kanban board markdown
+- **14 MCP Tools**: Ticket 7 + Git 7
+- **1 Prompt**: `kickoff` (workflow instructions + next ticket id)
+- **3 Resources**: `kanban://prompt/leader|worker|quality`
+- **YAML Tickets**: `tickets/*.yml`
+- **Status Validation**: transition rules + assignee check (`READY -> IN_PROGRESS`)
+- **Git Workflow**: command branch / ticket worktree / commit / merge tools
+- **Board Viewer (separate process)**:
+  - read-only
+  - `--root` required
+  - default port `4310` (`--port` override)
+  - polling every 1 second
+  - invalid ticket files shown in error section
 
-## 설치 및 MCP 등록 (3단계)
+## Install and MCP registration
 
-### Step 1: 클론 & 빌드
+### Step 1: clone and build
 
 ```bash
 git clone https://github.com/narnia-ai-harry/claude-kanban-mcp.git
@@ -21,66 +34,121 @@ npm install
 npm run build
 ```
 
-### Step 2: MCP 등록
+### Step 2: register MCP
 
 ```bash
-# 유저 스코프 (모든 프로젝트에서 사용)
+# user scope
 claude mcp add --transport stdio --scope user claude-kanban -- node /absolute/path/to/claude-kanban-mcp/build/index.js
 
-# 또는 프로젝트 스코프 (현재 프로젝트에서만)
+# or project scope
 claude mcp add --transport stdio claude-kanban -- node /absolute/path/to/claude-kanban-mcp/build/index.js
 ```
 
-### Step 3: 확인
+### Step 3: verify
 
 ```bash
 claude
-# Claude Code 안에서:
-> /mcp
-# claude-kanban: connected 가 보이면 성공
+# inside Claude Code
+/mcp
+# claude-kanban: connected
 ```
 
-## 사용법
+## Standard operation (2 terminals)
 
-Claude Code 세션에서:
+```bash
+# Terminal A: Claude Code + MCP workflow
+claude
 
+# Terminal B: Board Viewer (run from project root)
+npm run board -- --root "$(pwd)"
 ```
-# kickoff 프롬프트로 팀 워크플로우 시작
+
+If you need a different project path or custom port:
+
+```bash
+npm run board -- --root /absolute/path/to/target-repo --port 4310
+```
+
+Important: MCP and Viewer must point to the same project root.
+
+## MCP usage
+
+```text
+# start workflow
 /mcp__claude-kanban__kickoff
 
-# 또는 개별 도구 호출
-board_view 실행해줘
+# use tools directly
+ticket_create 실행해줘
 ```
 
 ## MCP Tools
 
-| Tool | 설명 | 주요 파라미터 |
+### Ticket Tools (7)
+
+| Tool | Description | Main Parameters |
 |---|---|---|
-| `ticket_create` | 티켓 생성 | title, type, priority, assignees, AC |
-| `ticket_get` | 티켓 조회 (YAML) | id |
-| `ticket_list` | 필터 조회 | status?, assignee?, priority? |
-| `ticket_update` | 필드 수정 | id, by, + 수정할 필드들 |
-| `ticket_transition` | 상태 변경 | id, to, by, note? |
-| `ticket_validate` | 전체 검증 | (없음) |
-| `board_view` | 칸반 보드 텍스트 | (없음) |
-| `board_generate` | BOARD.md 생성 | (없음) |
-| `ticket_next_id` | 다음 티켓 ID | (없음) |
+| `ticket_create` | create ticket | title, type, priority, assignees, AC |
+| `ticket_get` | get ticket YAML | id |
+| `ticket_list` | list/filter tickets | status?, assignee?, priority? |
+| `ticket_update` | update ticket fields | id, by, ... |
+| `ticket_transition` | state transition | id, to, by, note? |
+| `ticket_validate` | validate all tickets | (none) |
+| `ticket_next_id` | next ticket id | (none) |
 
-## 상태 전환 규칙
+### Git Tools (7)
 
-```
-BACKLOG → READY → IN_PROGRESS → REVIEW → DONE
-                                   ↓
-                              IN_PROGRESS (수정 요청)
+| Tool | Description | Main Parameters |
+|---|---|---|
+| `git_init_command` | create command branch (`feat/{slug}`) | slug, base? |
+| `git_create_ticket_branch` | ticket branch + worktree | ticket_id, command_branch |
+| `git_commit_ticket` | commit with ticket prefix | ticket_id, summary, cwd? |
+| `git_check_conflicts` | merge risk analysis (files/overlap/risk) | ticket_branch, command_branch |
+| `git_merge_ticket` | squash merge ticket -> command | ticket_id, command_branch, **by** |
+| `git_merge_command` | merge command -> base (`--no-ff`) | command_branch, base_branch?, message?, **by** |
+| `git_checkout` | checkout branch | branch |
 
-어디서든 → BLOCKED (해소 플랜 필수)
-BLOCKED → BACKLOG | READY | IN_PROGRESS | REVIEW
-```
+## Board Viewer
 
-## 개발
+- recommended command (from target project root):
 
 ```bash
-npm run dev          # tsx로 즉시 실행
-npm run build        # TypeScript 빌드
-npm run start        # 빌드된 서버 실행
+npm run board -- --root "$(pwd)"
+```
+
+- alternative command (explicit absolute path):
+
+```bash
+npm run board -- --root /absolute/path/to/target-repo --port 4310
+```
+
+- behavior:
+  - reads `tickets/*.yml`
+  - renders 6 status columns
+  - supports filters: status / assignee / priority
+  - shows selected ticket details
+  - refreshes every 1 second
+  - keeps working even when malformed YAML exists
+
+## State transitions
+
+```text
+BACKLOG     -> READY | BLOCKED
+READY       -> IN_PROGRESS | BLOCKED
+IN_PROGRESS -> REVIEW | BLOCKED
+REVIEW      -> DONE | IN_PROGRESS | BLOCKED
+BLOCKED     -> BACKLOG | READY | IN_PROGRESS | REVIEW
+DONE        -> IN_PROGRESS
+```
+
+## Development
+
+```bash
+npm run dev          # MCP server via tsx
+npm run board -- --root "$(pwd)"
+npm run build        # TypeScript build
+npm run start        # run built MCP server
+npm run lint         # tsc --noEmit
+npm run test         # build + node:test
+npm run typecheck    # tsc --noEmit
+npm run check        # lint + test + typecheck
 ```

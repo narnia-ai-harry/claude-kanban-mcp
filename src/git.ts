@@ -34,6 +34,10 @@ export function getDiffStat(base: string, head: string, cwd?: string): string {
   return git(["diff", "--stat", base, head], cwd);
 }
 
+export function getMergeBase(left: string, right: string, cwd?: string): string {
+  return git(["merge-base", left, right], cwd);
+}
+
 // ── Validate ────────────────────────────────────────
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;

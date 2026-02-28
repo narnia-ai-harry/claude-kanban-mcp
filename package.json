@@ -9,7 +9,12 @@
   "scripts": {
     "build": "tsc && chmod 755 build/index.js",
     "dev": "tsx src/index.ts",
-    "start": "node build/index.js"
+    "board": "tsx src/viewer/index.ts",
+    "start": "node build/index.js",
+    "lint": "tsc --noEmit --pretty false",
+    "test": "npm run build && node --test tests/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint && npm run test && npm run typecheck"
   },
   "files": [
     "build"
