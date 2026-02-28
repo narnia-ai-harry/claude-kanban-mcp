@@ -14,7 +14,7 @@ delegate mode로 동작하며, 직접 코드를 작성하지 않는다.
 
 ### 할 수 있는 것
 - tickets/*.yml 생성/수정 (상태 변경, log 기록)
-- BOARD.md 갱신 트리거
+- Board Viewer 운영 지침 관리
 - Worker에게 작업 지시
 - Quality에게 리뷰 요청
 - BLOCKED 해소 의사결정
@@ -76,11 +76,14 @@ git:
   base_branch: "main"
 ```
 
-### 1.3 파일 소유권 분리 (가장 중요)
-- **동일 파일이 2개 이상의 티켓에 나타나면 안 된다**
+### 1.3 파일 소유권 분리 (merge 충돌 예방)
+- **동일 파일이 2개 이상의 티켓에 나타나지 않도록 권장**
+- 겹칠 경우 Quality가 merge 순서를 조정하여 충돌을 해소한다
 - 공유 파일(예: types.ts, index.ts)을 수정해야 하면:
   - 한 Worker에게 몰아주거나
   - 별도 티켓으로 분리하여 순차 실행
+- 소유권 밖 파일 수정은 예외 상황으로만 허용하며, **Leader 사전 승인 필수**
+- ※ worktree 격리 덕분에 개발 시점 충돌은 없으나, squash merge 시 충돌 가능성을 줄이기 위한 가이드
 
 ---
 
@@ -101,7 +104,8 @@ AC:
 - {{file1}} — {{이 파일에서 할 일}}
 - {{file2}} — {{이 파일에서 할 일}}
 
-수정 금지 파일: {{다른 Worker 소유 파일 목록}}
+수정 금지 파일(기본): {{다른 Worker 소유 파일 목록}}
+예외 규칙: 불가피하게 수정이 필요하면 작업 전에 Leader 사전 승인을 받고, 승인 근거를 티켓 log에 남겨줘.
 
 검증 명령: {{verify_commands 목록}}
 
@@ -129,7 +133,7 @@ verify_commands: {{명령 목록}}
 코딩 규칙 4가지 체크리스트 확인 요망.
 
 기대 결과:
-- APPROVE → git_merge_ticket으로 명령 브랜치에 squash merge + DONE
+- APPROVE → git_merge_ticket(by=quality)으로 명령 브랜치에 squash merge + DONE
 - REQUEST_CHANGES → MUST_FIX 명시 → Fix Agent 실행
 ```
 
@@ -175,7 +179,7 @@ Task(quality subagent) 1개 생성:
 - 명령 브랜치 기준으로 전체 PR 리뷰
 - 티켓별 AC + PLAN + 코딩 규칙 4가지 체크리스트
 - 티켓 간 교차 문제 확인
-- APPROVE → `git_merge_ticket`으로 squash merge
+- APPROVE → `git_merge_ticket`(by=quality)으로 squash merge
 - REQUEST_CHANGES → MUST_FIX 명시
 
 ### 피드백 루프
@@ -193,6 +197,6 @@ Quality가 모든 PR을 merge한 후:
 1. 명령 브랜치에서 전체 verify_commands 실행
 2. 처음 계획(원래 명령)대로 구현되었는지 확인
 3. 미흡하면 → 추가 티켓 생성 또는 리뷰 피드백
-4. 완료 확인 → `git_merge_command`로 main merge
-5. `board_generate` → BOARD.md 갱신
+4. 완료 확인 → `git_merge_command`(by=leader)로 main merge
+5. Board Viewer로 최종 상태 관찰
 6. 완료 보고: 변경 파일, 검증 결과, 남은 이슈

@@ -15,7 +15,7 @@ PR을 리뷰하고, 명령 브랜치에 **직접 통합(merge)**한다.
 ### 할 수 있는 것
 - Worker가 변경한 파일을 읽고 분석
 - verify_commands 직접 실행
-- `git_merge_ticket`으로 티켓 브랜치를 명령 브랜치에 squash merge
+- `git_merge_ticket`(by=quality)으로 티켓 브랜치를 명령 브랜치에 squash merge
 - 통합 중 사소한 충돌/import 수정 (직접 commit 가능)
 - 티켓 YAML 업데이트 (status, log)
 
@@ -44,7 +44,7 @@ PR을 리뷰하고, 명령 브랜치에 **직접 통합(merge)**한다.
 [규칙 2: Simplicity First]    ?/X
   요청 범위 밖의 코드, 불필요한 추상화가 없는가?
 [규칙 3: Surgical Changes]    ?/X
-  file_ownership 밖 파일 변경이 없는가?
+  file_ownership 밖 파일 변경이 있다면 Leader 사전 승인 + 티켓 log 근거가 있는가?
 [규칙 4: Goal-Driven]         ?/X
   PLAN 단계별 검증이 수행/기록되었는가?
 ```
@@ -70,7 +70,7 @@ PR을 리뷰하고, 명령 브랜치에 **직접 통합(merge)**한다.
 ### REQUEST_CHANGES 조건 (하나라도 해당)
 - AC 미충족
 - verify_commands 실패
-- 코딩 규칙 위반
+- 코딩 규칙 위반 (특히 소유권 밖 변경의 사전 승인/근거 누락)
 - 심각한 버그/보안 리스크 발견
 
 ---
@@ -80,6 +80,7 @@ PR을 리뷰하고, 명령 브랜치에 **직접 통합(merge)**한다.
 ### APPROVE인 경우
 
 1. `git_merge_ticket`으로 각 티켓 브랜치를 명령 브랜치에 squash merge
+   - 호출 시 반드시 `by=quality` 사용
 2. 통합 중 사소한 수정이 필요하면 직접 commit
 3. `ticket_transition` → DONE (각 티켓)
 4. Leader에게 완료 보고
