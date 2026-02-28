@@ -19,47 +19,56 @@ Claude Code 에이전트 팀을 위한 티켓 기반 Kanban MCP 서버입니다.
 
 ## 시작 가이드 (작업 레포에서 시작)
 
-이 문서는 **현재 위치가 작업 대상 레포 루트**라고 가정합니다.
+이 문서는 **터미널에서 이미 작업 대상 레포 루트로 `cd`한 상태**를 가정합니다.
 
 ```bash
 pwd
 # 예: /mnt/c/.../my-project
 ```
 
+중요:
+- `MCP_DIR` = `claude-kanban-mcp`가 실제 설치된 경로
+- 현재 작업 레포 경로는 필요할 때 `$(pwd)`로 직접 사용
+- `MCP_DIR`와 `$(pwd)`는 보통 서로 다릅니다.
+
+---
+
 ## 시나리오 A: 새 로컬 환경에서 첫 프로젝트 시작 (처음 설치)
 
-### 1) MCP 저장소 설치 위치 고정
+### 1) MCP 저장소 설치/빌드
 
-작업 레포에서 바로 아래 명령을 실행하면, MCP를 `$HOME/.claude-kanban-mcp`에 설치합니다.
+작업 레포 기준으로 부모 디렉토리에 MCP를 clone하는 예시입니다.
 
 ```bash
-git clone https://github.com/narnia-ai-harry/claude-kanban-mcp.git "$HOME/.claude-kanban-mcp"
-npm --prefix "$HOME/.claude-kanban-mcp" install
-npm --prefix "$HOME/.claude-kanban-mcp" run build
+git clone https://github.com/narnia-ai-harry/claude-kanban-mcp.git ../claude-kanban-mcp
+MCP_DIR="$(cd ../claude-kanban-mcp && pwd)"
+
+npm --prefix "$MCP_DIR" install
+npm --prefix "$MCP_DIR" run build
 ```
 
 ### 2) Claude Code에 MCP 등록
 
-`user scope` 등록을 권장합니다. (한 번 등록하면 다른 프로젝트에서도 재사용 가능)
+`user scope` 등록 권장 (한 번 등록하면 다른 프로젝트에서도 재사용 가능)
 
 ```bash
 # 권장: 유저 스코프
-claude mcp add --transport stdio --scope user claude-kanban -- node "$HOME/.claude-kanban-mcp/build/index.js"
+claude mcp add --transport stdio --scope user claude-kanban -- node "$MCP_DIR/build/index.js"
 
 # 대안: 프로젝트 스코프(현재 레포에서만)
-claude mcp add --transport stdio claude-kanban -- node "$HOME/.claude-kanban-mcp/build/index.js"
+claude mcp add --transport stdio claude-kanban -- node "$MCP_DIR/build/index.js"
 ```
 
 ### 3) 작업 시작 (2개 터미널)
 
 ```bash
-# Terminal A (작업 레포 루트에서)
+# Terminal A (작업 레포 루트)
 claude
 ```
 
 ```bash
-# Terminal B (작업 레포 루트에서)
-npm --prefix "$HOME/.claude-kanban-mcp" run board -- --root "$(pwd)"
+# Terminal B (작업 레포 루트)
+npm --prefix "$MCP_DIR" run board -- --root "$(pwd)"
 ```
 
 브라우저에서 `http://127.0.0.1:4310` 접속.
@@ -68,7 +77,7 @@ npm --prefix "$HOME/.claude-kanban-mcp" run board -- --root "$(pwd)"
 
 ## 시나리오 B: 이미 install/build/register 완료, 다른 레포에서 시작
 
-이미 `$HOME/.claude-kanban-mcp` 설치 + `claude-kanban` 등록이 끝난 상태라면 설치/등록은 건너뜁니다.
+설치/등록이 이미 끝났다면, 새 레포에서는 `MCP_DIR`만 정확히 잡아서 바로 시작하면 됩니다.
 
 ### 1) 새 작업 레포로 이동
 
@@ -77,7 +86,22 @@ cd /path/to/another-project
 mkdir -p tickets
 ```
 
-### 2) 바로 실행
+### 2) 등록된 경로에서 MCP_DIR 추출
+
+아래 명령은 `claude mcp list` 출력에서 `claude-kanban`의 실행 경로를 추출합니다.
+
+```bash
+MCP_DIR="$(claude mcp list | sed -n 's/^claude-kanban: node \(.*\)\/build\/index\.js.*/\1/p')"
+```
+
+확인:
+
+```bash
+echo "$MCP_DIR"
+test -f "$MCP_DIR/build/index.js" && echo "MCP 경로 확인 완료"
+```
+
+### 3) 바로 실행
 
 ```bash
 # Terminal A
@@ -86,13 +110,12 @@ claude
 
 ```bash
 # Terminal B
-npm --prefix "$HOME/.claude-kanban-mcp" run board -- --root "$(pwd)"
+npm --prefix "$MCP_DIR" run board -- --root "$(pwd)"
 ```
 
 중요:
 - MCP와 Viewer는 같은 프로젝트 루트를 바라봐야 합니다.
-- 예시처럼 `--scope user` 등록을 해두면 레포를 바꿔도 재등록이 필요 없습니다.
-- 과거에 프로젝트 스코프로만 등록했다면, 새 레포에서 `claude mcp add ...`를 다시 실행해야 합니다.
+- 프로젝트 스코프로만 등록했다면 새 레포에서 `claude mcp add ...`를 다시 실행해야 합니다.
 
 ---
 
@@ -140,16 +163,14 @@ ticket_create 실행해줘
 
 ## Board Viewer
 
-작업 레포 루트에서 실행:
-
 ```bash
-npm --prefix "$HOME/.claude-kanban-mcp" run board -- --root "$(pwd)"
+npm --prefix "$MCP_DIR" run board -- --root "$(pwd)"
 ```
 
 포트 변경:
 
 ```bash
-npm --prefix "$HOME/.claude-kanban-mcp" run board -- --root "$(pwd)" --port 4311
+npm --prefix "$MCP_DIR" run board -- --root "$(pwd)" --port 4311
 ```
 
 동작:
